@@ -22,6 +22,7 @@ import javax.annotation.Nullable
 import com.twosigma.flint.FlintConf
 import com.twosigma.flint.annotation.PythonApi
 import com.twosigma.flint.rdd._
+import com.twosigma.flint.timeseries.clock.UniformClock
 import com.twosigma.flint.timeseries.row.{ InternalRowUtils, Schema }
 import com.twosigma.flint.timeseries.summarize.{ ColumnList, OverlappableSummarizer, OverlappableSummarizerFactory, SummarizerFactory }
 import com.twosigma.flint.timeseries.time.TimeFormat
@@ -43,6 +44,7 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.SQLImplicits
 
 object TimeSeriesRDD {
+
   /**
    * The name of timestamp column. A [[TimeSeriesRDD]] always has such a column.
    */
@@ -93,19 +95,19 @@ object TimeSeriesRDD {
     timeUnit: TimeUnit
   ): Row => (Long, InternalRow) = {
     val timeColumnIndex = schema.fieldIndex(timeColumnName)
-    val toInternalRow = CatalystTypeConvertersWrapper.toCatalystRowConverter(schema)
+    val toInternalRow =
+      CatalystTypeConvertersWrapper.toCatalystRowConverter(schema)
 
-    if (timeUnit == NANOSECONDS) {
-      (row: Row) =>
-        (row.getLong(timeColumnIndex), toInternalRow(row))
-    } else {
-      (row: Row) =>
-        val values = row.toSeq.toArray
-        val t = TimeUnit.NANOSECONDS.convert(row.getLong(timeColumnIndex), timeUnit)
-        values.update(timeColumnIndex, t)
-        val updatedRow = new GenericRow(values)
+    if (timeUnit == NANOSECONDS) { (row: Row) =>
+      (row.getLong(timeColumnIndex), toInternalRow(row))
+    } else { (row: Row) =>
+      val values = row.toSeq.toArray
+      val t =
+        TimeUnit.NANOSECONDS.convert(row.getLong(timeColumnIndex), timeUnit)
+      values.update(timeColumnIndex, t)
+      val updatedRow = new GenericRow(values)
 
-        (t, toInternalRow(updatedRow))
+      (t, toInternalRow(updatedRow))
     }
   }
 
@@ -116,9 +118,12 @@ object TimeSeriesRDD {
    */
   @PythonApi
   def canonizeTime(dataFrame: DataFrame, timeUnit: TimeUnit): DataFrame = {
-    val targetTimeType = TimeType(dataFrame.sparkSession.conf.get(
-      FlintConf.TIME_TYPE_CONF, FlintConf.TIME_TYPE_DEFAULT
-    ))
+    val targetTimeType = TimeType(
+      dataFrame.sparkSession.conf.get(
+        FlintConf.TIME_TYPE_CONF,
+        FlintConf.TIME_TYPE_DEFAULT
+      )
+    )
 
     val inputTimeDataType = dataFrame.schema(timeColumnName).dataType
 
@@ -127,20 +132,31 @@ object TimeSeriesRDD {
         if (timeUnit == NANOSECONDS) {
           dataFrame
         } else {
-          val converter: Long => Long = TimeUnit.NANOSECONDS.convert(_, timeUnit)
+          val converter: Long => Long =
+            TimeUnit.NANOSECONDS.convert(_, timeUnit)
           val udfConverter = udf(converter)
-          dataFrame.withColumn(timeColumnName, udfConverter(col(timeColumnName)))
+          dataFrame.withColumn(
+            timeColumnName,
+            udfConverter(col(timeColumnName))
+          )
         }
       case (LongType, TimeType.TimestampType) =>
         val toNanos: Long = timeUnit.toNanos(1)
-        dataFrame.withColumn(timeColumnName, NanosToTimestamp(col(timeColumnName) * toNanos))
+        dataFrame.withColumn(
+          timeColumnName,
+          NanosToTimestamp(col(timeColumnName) * toNanos)
+        )
       case (TimestampType, TimeType.LongType) =>
-        dataFrame.withColumn(timeColumnName, TimestampToNanos(col(timeColumnName)))
+        dataFrame.withColumn(
+          timeColumnName,
+          TimestampToNanos(col(timeColumnName))
+        )
       case (TimestampType, TimeType.TimestampType) =>
         dataFrame
-      case _ => throw new IllegalArgumentException(
-        s"Unsupported types. inputTimeType: $inputTimeDataType timeType: $targetTimeType"
-      )
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Unsupported types. inputTimeType: $inputTimeDataType timeType: $targetTimeType"
+        )
     }
   }
 
@@ -156,7 +172,10 @@ object TimeSeriesRDD {
     val timeType = TimeType.get(SQLContext.getOrCreate(sc).sparkSession)
     val timeIndex = schema.fieldIndex(timeColumnName)
     val rdd = sc.parallelize(
-      rows.map { row => (timeType.internalToNanos(row.getLong(timeIndex)), row) }, numSlices
+      rows.map { row =>
+        (timeType.internalToNanos(row.getLong(timeIndex)), row)
+      },
+      numSlices
     )
     TimeSeriesRDD.fromInternalOrderedRDD(Conversion.fromSortedRDD(rdd), schema)
   }
@@ -185,7 +204,12 @@ object TimeSeriesRDD {
     endNanos: java.lang.Long,
     timeColumn: String
   ): DataFrame = {
-    DFBetween(dataframe, Option(beginNanos).map(_.toLong), Option(endNanos).map(_.toLong), timeColumn)
+    DFBetween(
+      dataframe,
+      Option(beginNanos).map(_.toLong),
+      Option(endNanos).map(_.toLong),
+      timeColumn
+    )
   }
 
   /**
@@ -208,11 +232,17 @@ object TimeSeriesRDD {
     dataFrame.schema(timeColumn).dataType match {
       case TimestampType =>
         df = beginNanosOpt match {
-          case Some(nanos) => df.filter(df(timeColumn) >= lit(nanos / nanoToSec).cast(TimestampType))
+          case Some(nanos) =>
+            df.filter(
+              df(timeColumn) >= lit(nanos / nanoToSec).cast(TimestampType)
+            )
           case None => df
         }
         df = endNanosOpt match {
-          case Some(nanos) => df.filter(df(timeColumn) < lit(nanos / nanoToSec).cast(TimestampType))
+          case Some(nanos) =>
+            df.filter(
+              df(timeColumn) < lit(nanos / nanoToSec).cast(TimestampType)
+            )
           case None => df
         }
       case LongType =>
@@ -224,8 +254,11 @@ object TimeSeriesRDD {
           case Some(nanos) => df.filter(df(timeColumn) < nanos)
           case None => df
         }
-      case t => throw new IllegalArgumentException(s"Unsupported data type for time column: ${t}. " +
-        s"Only TimestampType and LongType are supported.")
+      case t =>
+        throw new IllegalArgumentException(
+          s"Unsupported data type for time column: ${t}. " +
+            s"Only TimestampType and LongType are supported."
+        )
     }
 
     df
@@ -328,7 +361,8 @@ object TimeSeriesRDD {
     timeColumn: String
   ): DataFrame = {
     require(
-      !dataFrame.columns.contains(timeColumnName) || timeColumn == timeColumnName,
+      !dataFrame.columns
+        .contains(timeColumnName) || timeColumn == timeColumnName,
       "Cannot use another column as timeColumn while a column with name `time` exists"
     )
 
@@ -344,11 +378,14 @@ object TimeSeriesRDD {
     val timeFirstDf = if (convertedDf.schema.fieldIndex(timeColumnName) == 0) {
       convertedDf
     } else {
-      val nonTimeColumns = convertedDf.schema.fieldNames.filterNot(_ == TimeSeriesRDD.timeColumnName)
+      val nonTimeColumns = convertedDf.schema.fieldNames
+        .filterNot(_ == TimeSeriesRDD.timeColumnName)
       convertedDf.select(timeColumnName, nonTimeColumns: _*)
     }
 
-    if (isSorted || TimeSeriesStore.isSorted(timeFirstDf.queryExecution.executedPlan)) {
+    if (isSorted || TimeSeriesStore.isSorted(
+      timeFirstDf.queryExecution.executedPlan
+    )) {
       timeFirstDf
     } else {
       timeFirstDf.sort(timeColumnName)
@@ -364,7 +401,8 @@ object TimeSeriesRDD {
     deps: Seq[Dependency[_]],
     rangeSplits: Array[RangeSplit[Long]]
   ): TimeSeriesRDD = {
-    val canonizedDf = canonizeDF(dataFrame, isSorted = true, timeUnit, timeColumn)
+    val canonizedDf =
+      canonizeDF(dataFrame, isSorted = true, timeUnit, timeColumn)
     val partitionInfo = PartitionInfo(rangeSplits, deps)
     TimeSeriesRDD.fromDFWithPartInfo(canonizedDf, Some(partitionInfo))
   }
@@ -449,9 +487,11 @@ object TimeSeriesRDD {
     val sqlContext = SQLContext.getOrCreate(sc)
     val df = sqlContext.read.parquet(paths: _*)
 
-    val prunedDf = columns.map { columnNames =>
-      df.select(columnNames.map(col): _*)
-    }.getOrElse(df)
+    val prunedDf = columns
+      .map { columnNames =>
+        df.select(columnNames.map(col): _*)
+      }
+      .getOrElse(df)
 
     fromDF(DFBetween(prunedDf, beginNanos, endNanos, timeColumn))(
       isSorted = isSorted,
@@ -509,18 +549,22 @@ object TimeSeriesRDD {
   ): TimeSeriesRDD = new TimeSeriesRDDImpl(TimeSeriesStore(dataFrame, partInfo))
 
   // A function taking any row as input and just return `Seq[Any]()`.
-  private[flint] val emptyKeyFn: InternalRow => Seq[Any] = {
-    _: InternalRow => Seq[Any]()
+  private[flint] val emptyKeyFn: InternalRow => Seq[Any] = { _: InternalRow =>
+    Seq[Any]()
   }
 
-  private[flint] def createSafeGetAsAny(schema: StructType): Seq[String] => (InternalRow => Seq[Any]) = {
+  private[flint] def createSafeGetAsAny(
+    schema: StructType
+  ): Seq[String] => (InternalRow => Seq[Any]) = {
     (cols: Seq[String]) =>
       {
         if (cols.isEmpty) {
           emptyKeyFn
         } else {
-          val columns = cols.map(column => (schema.fieldIndex(column), schema(column).dataType))
-          (row: InternalRow) => InternalRowUtils.selectIndices(columns)(row)
+          val columns = cols.map(column =>
+            (schema.fieldIndex(column), schema(column).dataType))
+          (row: InternalRow) =>
+            InternalRowUtils.selectIndices(columns)(row)
         }
       }
   }
@@ -534,8 +578,10 @@ object TimeSeriesRDD {
     case ColumnList.All => input
     case ColumnList.Sequence(columnSeq) =>
       val columns = input.schema.fieldNames.toSet
-      val neededColumns = (Seq(TimeSeriesRDD.timeColumnName) ++ columnSeq ++ keys).distinct
-      neededColumns.foreach(column => require(columns.contains(column), s"Column $column doesn't exist."))
+      val neededColumns =
+        (Seq(TimeSeriesRDD.timeColumnName) ++ columnSeq ++ keys).distinct
+      neededColumns.foreach(column =>
+        require(columns.contains(column), s"Column $column doesn't exist."))
 
       if (neededColumns.toSet.size == input.schema.size) {
         input
@@ -544,16 +590,30 @@ object TimeSeriesRDD {
       }
   }
 
-  private[flint] def mergeSchema(schemaA: StructType, schemaB: StructType): StructType = {
-    require(schemaA.length == schemaB.length, "Tables should have the same number of columns.")
+  private[flint] def mergeSchema(
+    schemaA: StructType,
+    schemaB: StructType
+  ): StructType = {
+    require(
+      schemaA.length == schemaB.length,
+      "Tables should have the same number of columns."
+    )
     val zipped = schemaA.zip(schemaB)
     val isCompatible = zipped.forall {
       case (columnA, columnB) =>
         columnA.name == columnB.name && columnA.dataType == columnB.dataType
     }
-    require(isCompatible, s"Schema $schemaA isn't compatible with $schemaB. Can't merge the tables.")
+    require(
+      isCompatible,
+      s"Schema $schemaA isn't compatible with $schemaB. Can't merge the tables."
+    )
     val newFields = zipped.map {
-      case (fieldA, fieldB) => StructField(fieldA.name, fieldA.dataType, fieldA.nullable | fieldB.nullable)
+      case (fieldA, fieldB) =>
+        StructField(
+          fieldA.name,
+          fieldA.dataType,
+          fieldA.nullable | fieldB.nullable
+        )
     }
     StructType(newFields)
   }
@@ -861,7 +921,8 @@ trait TimeSeriesRDD extends Serializable {
    */
   def groupByCycle(key: Seq[String] = Seq.empty): TimeSeriesRDD
 
-  private[flint] def groupByCycle(key: String): TimeSeriesRDD = groupByCycle(Option(key).toSeq)
+  private[flint] def groupByCycle(key: String): TimeSeriesRDD =
+    groupByCycle(Option(key).toSeq)
 
   /**
    * Groups rows whose timestamps falling into an interval. If a `key` is provided, rows within an interval will be
@@ -1023,7 +1084,8 @@ trait TimeSeriesRDD extends Serializable {
     key: String,
     leftAlias: String,
     rightAlias: String
-  ): TimeSeriesRDD = leftJoin(right, tolerance, Option(key).toSeq, leftAlias, rightAlias): TimeSeriesRDD
+  ): TimeSeriesRDD =
+    leftJoin(right, tolerance, Option(key).toSeq, leftAlias, rightAlias): TimeSeriesRDD
 
   /**
    * Performs the temporal future left-outer-join to the right [[TimeSeriesRDD]], i.e. left-join using inexact timestamp
@@ -1066,7 +1128,15 @@ trait TimeSeriesRDD extends Serializable {
     leftAlias: String,
     rightAlias: String,
     strictLookahead: Boolean
-  ): TimeSeriesRDD = futureLeftJoin(right, tolerance, Option(key).toSeq, leftAlias, rightAlias, strictLookahead)
+  ): TimeSeriesRDD =
+    futureLeftJoin(
+      right,
+      tolerance,
+      Option(key).toSeq,
+      leftAlias,
+      rightAlias,
+      strictLookahead
+    )
 
   /**
    * Computes aggregate statistics of rows that are within a cycle, i.e. rows share a timestamp.
@@ -1083,9 +1153,97 @@ trait TimeSeriesRDD extends Serializable {
    * val resultTimeSeriesRdd = timeSeriesRdd.summarizeCycles(Summary.sum("col"))
    * }}}
    */
-  def summarizeCycles(summarizer: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD
+  /**
+   * Performs the temporal interpolated left join to the right [[TimeSeriesRDD]], i.e. left-join using inexact
+   * timestamp matches. For each row in the left, appends the interpolated value betweek the closest past and future
+   * row rows from the right. The result is null in the right side when there is no match.
+   *
+   * @param right              The [[TimeSeriesRDD]] to find the future row.
+   * @param pastTolerance      The closest past row from the right will only be used if it was within the specified
+   *                           time of the row from the left. The default tolerance is "Ons" which provides the exact
+   *                           left-join. Examples of possible values are "1ms", "2s", "5m", "10h", "25d" etc.
+   * @param futureTolerance    The closest future row from the right will only be used if it was within the specified
+   *                           time of the row from the left. The default tolerance is "Ons" which provides the exact
+   *                           left-join. Examples of possible values are "1ms", "2s", "5m", "10h", "25d" etc.
+   * @param key                Columns that could be used as the matching key. If non-empty, the closest rows
+   *                           from right that shares a key with the current row from the left will be used.
+   * @param leftAlias          The prefix name for columns from left after join.
+   * @param rightAlias         The prefix name for columns from right after join.
+   * @param interpolation      The type of interposlation to perfrom, default is 'linear'
+   * @param strictLookahead    When performing the left join, allow exact timestamps to be matched or only allow future
+   *                           values to be used in interpolation. Default is false (allow exact matches)
+   * @return a joined [[TimeSeriesRDD]].
+   */
+  def interpolatedLeftJoin(
+    right: TimeSeriesRDD,
+    pastTolerance: Long = 0L,
+    futureTolerance: Long = 0L,
+    key: Seq[String] = Seq.empty,
+    leftAlias: String = null,
+    rightAlias: String = null,
+    interpolation: String = "linear",
+    strictLookahead: Boolean = false
+  ): TimeSeriesRDD
 
-  private[flint] def summarizeCycles(summarizer: SummarizerFactory, key: String): TimeSeriesRDD =
+  private[flint] def interpolatedLeftJoin(
+    right: TimeSeriesRDD,
+    pastTolerance: Long,
+    futureTolerance: Long,
+    key: String,
+    leftAlias: String,
+    rightAlias: String,
+    interpolation: String,
+    strictLookahead: Boolean
+  ): TimeSeriesRDD =
+    interpolatedLeftJoin(
+      right,
+      pastTolerance,
+      futureTolerance,
+      Option(key).toSeq,
+      leftAlias,
+      rightAlias,
+      interpolation,
+      strictLookahead
+    )
+
+  /**
+   * Performs an interpolation [[TimeSeriesRDD]], i.e.
+   * @param startTime          The start time of the interpolation
+   * @param endTime            The end time of the interpolation
+   * @param frequency          The sampling frequency
+   * @param pastTolerance      The closest past row from the right will only be used if it was within the specified
+   *                           time of the row from the left. The default tolerance is "Ons" which provides the exact
+   *                           left-join. Examples of possible values are "1ms", "2s", "5m", "10h", "25d" etc.
+   * @param futureTolerance    The closest future row from the right will only be used if it was within the specified
+   *                           time of the row from the left. The default tolerance is "Ons" which provides the exact
+   *                           left-join. Examples of possible values are "1ms", "2s", "5m", "10h", "25d" etc.
+   * @param key                Columns that could be used as the matching key. If non-empty, the closest rows
+   *                           from right that shares a key with the current row from the left will be used.
+   * @param interpolation      The type of interposlation to perfrom, default is 'linear'
+   * @param strictLookahead    When performing the left join, allow exact timestamps to be matched or only allow future
+   *                           values to be used in interpolation. Default is false (allow exact matches)
+   * @return a joined [[TimeSeriesRDD]].
+   */
+  def interpolate(
+    startTime: Long,
+    endTime: Long,
+    frequency: Long,
+    pastTolerance: Long = 0L,
+    futureTolerance: Long = 0L,
+    key: Seq[String] = Seq.empty,
+    interpolation: String = "linear",
+    strictLookahead: Boolean = false
+  ): TimeSeriesRDD
+
+  def summarizeCycles(
+    summarizer: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD
+
+  private[flint] def summarizeCycles(
+    summarizer: SummarizerFactory,
+    key: String
+  ): TimeSeriesRDD =
     summarizeCycles(summarizer, Option(key).toSeq)
 
   /**
@@ -1183,7 +1341,10 @@ trait TimeSeriesRDD extends Serializable {
    * val resultTimeSeriesRdd = timeSeriesRdd.summarize(Summary.sum("col"))
    * }}}
    */
-  def summarize(summarizer: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD
+  def summarize(
+    summarizer: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD
 
   /**
    * Undocumented function for the bravest.
@@ -1193,9 +1354,15 @@ trait TimeSeriesRDD extends Serializable {
    *
    * Use at your own risk.
    */
-  def summarizeState(summarizerFactory: SummarizerFactory, key: Seq[String] = Seq.empty): Map[Seq[Any], (Any, Any)]
+  def summarizeState(
+    summarizerFactory: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): Map[Seq[Any], (Any, Any)]
 
-  private[flint] def summarize(summarizer: SummarizerFactory, key: String): TimeSeriesRDD =
+  private[flint] def summarize(
+    summarizer: SummarizerFactory,
+    key: String
+  ): TimeSeriesRDD =
     summarize(summarizer, Option(key).toSeq)
 
   /**
@@ -1212,9 +1379,15 @@ trait TimeSeriesRDD extends Serializable {
    * val resultTimeSeriesRdd = timeSeriesRdd.addSummaryColumns(Summary.sum("col"))
    * }}}
    */
-  def addSummaryColumns(summarizer: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD
+  def addSummaryColumns(
+    summarizer: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD
 
-  private[flint] def addSummaryColumns(summarizer: SummarizerFactory, key: String): TimeSeriesRDD =
+  private[flint] def addSummaryColumns(
+    summarizer: SummarizerFactory,
+    key: String
+  ): TimeSeriesRDD =
     addSummaryColumns(summarizer, Option(key).toSeq)
 
   /**
@@ -1334,7 +1507,8 @@ class TimeSeriesRDDImpl private[timeseries] (
   import TimeSeriesRDD.timeColumnName
 
   override val schema: StructType = dataStore.schema
-  override val safeGetAsAny: Seq[String] => (InternalRow => Seq[Any]) = TimeSeriesRDD.createSafeGetAsAny(schema)
+  override val safeGetAsAny: Seq[String] => (InternalRow => Seq[Any]) =
+    TimeSeriesRDD.createSafeGetAsAny(schema)
 
   /**
    * Get a key function from a list of column names.
@@ -1357,7 +1531,8 @@ class TimeSeriesRDDImpl private[timeseries] (
    *
    * If the row is nested, returns a function that knows how to convert internal row to external row
    */
-  private val toExternalRow: InternalRow => ERow = CatalystTypeConvertersWrapper.toScalaRowConverter(schema)
+  private val toExternalRow: InternalRow => ERow =
+    CatalystTypeConvertersWrapper.toScalaRowConverter(schema)
 
   override def rdd: RDD[Row] = dataStore.rdd
 
@@ -1388,14 +1563,21 @@ class TimeSeriesRDDImpl private[timeseries] (
   }
 
   def repartition(numPartitions: Int): TimeSeriesRDD =
-    TimeSeriesRDD.fromInternalOrderedRDD(orderedRdd.repartition(numPartitions), schema)
+    TimeSeriesRDD.fromInternalOrderedRDD(
+      orderedRdd.repartition(numPartitions),
+      schema
+    )
 
   def coalesce(numPartitions: Int): TimeSeriesRDD =
-    TimeSeriesRDD.fromInternalOrderedRDD(orderedRdd.coalesce(numPartitions), schema)
+    TimeSeriesRDD.fromInternalOrderedRDD(
+      orderedRdd.coalesce(numPartitions),
+      schema
+    )
 
   def keepRows(fn: Row => Boolean): TimeSeriesRDD =
     TimeSeriesRDD.fromInternalOrderedRDD(unsafeOrderedRdd.filterOrdered {
-      (_: Long, r: InternalRow) => fn(toExternalRow(r))
+      (_: Long, r: InternalRow) =>
+        fn(toExternalRow(r))
     }, schema)
 
   def filter(condition: Column): TimeSeriesRDD = withUnshuffledDataFrame {
@@ -1404,7 +1586,8 @@ class TimeSeriesRDDImpl private[timeseries] (
 
   def deleteRows(fn: Row => Boolean): TimeSeriesRDD =
     TimeSeriesRDD.fromInternalOrderedRDD(unsafeOrderedRdd.filterOrdered {
-      (_: Long, r: InternalRow) => !fn(toExternalRow(r))
+      (_: Long, r: InternalRow) =>
+        !fn(toExternalRow(r))
     }, schema)
 
   def keepColumns(columns: String*): TimeSeriesRDD = withUnshuffledDataFrame {
@@ -1412,45 +1595,55 @@ class TimeSeriesRDDImpl private[timeseries] (
 
     val newColumns = (timeColumnName +: nonTimeColumns).map {
       // We need to escape the column name to ensure that columns with names like "a.b" are handled well.
-      columnName => dataStore.dataFrame.col(s"`$columnName`")
+      columnName =>
+        dataStore.dataFrame.col(s"`$columnName`")
     }
 
     dataStore.dataFrame.select(newColumns: _*)
   }
 
   def deleteColumns(columns: String*): TimeSeriesRDD = withUnshuffledDataFrame {
-    require(!columns.contains(timeColumnName), "You can't delete the time column!")
+    require(
+      !columns.contains(timeColumnName),
+      "You can't delete the time column!"
+    )
 
     dataStore.dataFrame.drop(columns: _*)
   }
 
-  def renameColumns(fromTo: (String, String)*): TimeSeriesRDD = withUnshuffledDataFrame {
-    val fromToMap = fromTo.toMap
-    require(!fromToMap.contains(timeColumnName), "You can't rename the time column!")
-    require(fromToMap.size == fromTo.size, "Repeating column names are not allowed!")
+  def renameColumns(fromTo: (String, String)*): TimeSeriesRDD =
+    withUnshuffledDataFrame {
+      val fromToMap = fromTo.toMap
+      require(
+        !fromToMap.contains(timeColumnName),
+        "You can't rename the time column!"
+      )
+      require(
+        fromToMap.size == fromTo.size,
+        "Repeating column names are not allowed!"
+      )
 
-    val newColumns = dataStore.dataFrame.schema.fieldNames.map {
-      columnName =>
+      val newColumns = dataStore.dataFrame.schema.fieldNames.map { columnName =>
         if (fromToMap.contains(columnName)) {
           dataStore.dataFrame.col(s"`$columnName`").as(fromToMap(columnName))
         } else {
           dataStore.dataFrame.col(s"`$columnName`")
         }
+      }
+
+      dataStore.dataFrame.select(newColumns: _*)
     }
 
-    dataStore.dataFrame.select(newColumns: _*)
-  }
-
   def addColumns(columns: ((String, DataType), Row => Any)*): TimeSeriesRDD = {
-    val (add, newSchema) = InternalRowUtils.addOrUpdate(schema, columns.map(_._1))
+    val (add, newSchema) =
+      InternalRowUtils.addOrUpdate(schema, columns.map(_._1))
 
     TimeSeriesRDD.fromInternalOrderedRDD(
-      orderedRdd.mapValues {
-        (_, row) =>
-          val extRow = toExternalRow(row)
-          add(row, columns.map {
-            case (_, columnFunc) => columnFunc(extRow)
-          })
+      orderedRdd.mapValues { (_, row) =>
+        val extRow = toExternalRow(row)
+        add(row, columns.map {
+          case (_, columnFunc) => columnFunc(extRow)
+        })
       },
       newSchema
     )
@@ -1464,43 +1657,59 @@ class TimeSeriesRDDImpl private[timeseries] (
     key: Seq[String] = Seq.empty
   ): TimeSeriesRDD = {
     val targetNameDataTypes = columns.map(c => c.name -> c.dataType)
-    val (add, newSchema) = InternalRowUtils.addOrUpdate(schema, targetNameDataTypes)
+    val (add, newSchema) =
+      InternalRowUtils.addOrUpdate(schema, targetNameDataTypes)
 
-    val newRdd = orderedRdd.groupByKey(safeGetAsAny(key)).flatMapValues { (_, rows: Array[InternalRow]) =>
-      val eRows = rows.map(toExternalRow)
+    val newRdd = orderedRdd.groupByKey(safeGetAsAny(key)).flatMapValues {
+      (_, rows: Array[InternalRow]) =>
+        val eRows = rows.map(toExternalRow)
 
-      val rowColumnValues: Seq[IndexedSeq[Any]] = columns.map { cycleColumn =>
-        // Pad returned sequences to the same length as the input rows with `null`
-        cycleColumn.applyCycle(eRows).padTo(eRows.length, null)(scala.collection.breakOut)
-      }
+        val rowColumnValues: Seq[IndexedSeq[Any]] = columns.map { cycleColumn =>
+          // Pad returned sequences to the same length as the input rows with `null`
+          cycleColumn
+            .applyCycle(eRows)
+            .padTo(eRows.length, null)(scala.collection.breakOut)
+        }
 
-      rows.zipWithIndex.map {
-        case (row, idx) =>
-          add(row, rowColumnValues.map(value => value(idx)))
-      }
+        rows.zipWithIndex.map {
+          case (row, idx) =>
+            add(row, rowColumnValues.map(value => value(idx)))
+        }
     }
 
     TimeSeriesRDD.fromInternalOrderedRDD(newRdd, newSchema)
   }
 
-  def groupByCycle(key: Seq[String] = Seq.empty): TimeSeriesRDD = summarizeCycles(Summarizers.rows("rows"), key)
+  def groupByCycle(key: Seq[String] = Seq.empty): TimeSeriesRDD =
+    summarizeCycles(Summarizers.rows("rows"), key)
 
   def groupByInterval(
     clock: TimeSeriesRDD,
     key: Seq[String] = Seq.empty,
     inclusion: String = "begin",
     rounding: String = "end"
-  ): TimeSeriesRDD = summarizeIntervals(clock, Summarizers.rows("rows"), key, inclusion, rounding)
+  ): TimeSeriesRDD =
+    summarizeIntervals(
+      clock,
+      Summarizers.rows("rows"),
+      key,
+      inclusion,
+      rounding
+    )
 
   def addWindows(
     window: Window,
     key: Seq[String] = Seq.empty
-  ): TimeSeriesRDD = summarizeWindows(window, Summarizers.rows(s"window_${window.name}"), key)
+  ): TimeSeriesRDD =
+    summarizeWindows(window, Summarizers.rows(s"window_${window.name}"), key)
 
   def merge(other: TimeSeriesRDD): TimeSeriesRDD = {
     val newSchema = TimeSeriesRDD.mergeSchema(schema, other.schema)
     val otherOrderedRdd = other.orderedRdd
-    TimeSeriesRDD.fromInternalOrderedRDD(orderedRdd.merge(otherOrderedRdd), newSchema)
+    TimeSeriesRDD.fromInternalOrderedRDD(
+      orderedRdd.merge(otherOrderedRdd),
+      newSchema
+    )
   }
 
   def leftJoin(
@@ -1513,16 +1722,22 @@ class TimeSeriesRDDImpl private[timeseries] (
     val window = Windows.pastAbsoluteTime(tolerance)
     val toleranceFn = window.shift _
     val joinedRdd = orderedRdd.leftJoin(
-      right.orderedRdd, toleranceFn, safeGetAsAny(key), right.safeGetAsAny(key)
+      right.orderedRdd,
+      toleranceFn,
+      safeGetAsAny(key),
+      right.safeGetAsAny(key)
     )
 
     val (concat, newSchema) = InternalRowUtils.concat2(
-      this.schema, right.schema,
-      Option(leftAlias), Option(rightAlias),
+      this.schema,
+      right.schema,
+      Option(leftAlias),
+      Option(rightAlias),
       (key :+ timeColumnName).toSet
     )
 
-    val rightNullRow = InternalRow.fromSeq(Array.fill[Any](right.schema.size)(null))
+    val rightNullRow =
+      InternalRow.fromSeq(Array.fill[Any](right.schema.size)(null))
 
     val newRdd = joinedRdd.collectOrdered {
       case (_, (r1, Some((_, r2)))) => concat(r1, r2)
@@ -1542,17 +1757,23 @@ class TimeSeriesRDDImpl private[timeseries] (
     val window = Windows.futureAbsoluteTime(tolerance)
     val toleranceFn = window.shift _
     val joinedRdd = orderedRdd.futureLeftJoin(
-      right.orderedRdd, toleranceFn, safeGetAsAny(key),
-      right.safeGetAsAny(key), strictForward = strictLookahead
+      right.orderedRdd,
+      toleranceFn,
+      safeGetAsAny(key),
+      right.safeGetAsAny(key),
+      strictForward = strictLookahead
     )
 
     val (concat, newSchema) = InternalRowUtils.concat2(
-      this.schema, right.schema,
-      Option(leftAlias), Option(rightAlias),
+      this.schema,
+      right.schema,
+      Option(leftAlias),
+      Option(rightAlias),
       (key :+ timeColumnName).toSet
     )
 
-    val rightNullRow = InternalRow.fromSeq(Array.fill[Any](right.schema.size)(null))
+    val rightNullRow =
+      InternalRow.fromSeq(Array.fill[Any](right.schema.size)(null))
     val newRdd = joinedRdd.collectOrdered {
       case (_, (r1, Some((_, r2)))) => concat(r1, r2)
       case (_, (r1, None)) => concat(r1, rightNullRow)
@@ -1560,7 +1781,143 @@ class TimeSeriesRDDImpl private[timeseries] (
     TimeSeriesRDD.fromInternalOrderedRDD(newRdd, newSchema)
   }
 
-  def summarizeCycles(summarizer: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD = {
+  def interpolatedLeftJoin(
+    right: TimeSeriesRDD,
+    pastTolerance: Long = 0L,
+    futureTolerance: Long = 0L,
+    key: Seq[String] = Seq.empty,
+    leftAlias: String = null,
+    rightAlias: String = null,
+    interpolation: String = "linear",
+    strictLookahead: Boolean = false
+  ): TimeSeriesRDD = {
+    val pastToleranceFn = (t: Long) => t - pastTolerance
+    val futueToleranceFn = (t: Long) => t + futureTolerance
+    val interpolationFn = interpolation match {
+      case "linear" =>
+        InternalRowUtils.linearInterpolationFunction(right.schema)
+      case "lookback" =>
+        InternalRowUtils.lookbackInterpolationFunction(right.schema)
+      case _ => InternalRowUtils.linearInterpolationFunction(right.schema)
+    }
+    val joinedRdd = orderedRdd.interpolatedLeftJoin(
+      right.orderedRdd,
+      pastToleranceFn,
+      futueToleranceFn,
+      safeGetAsAny(key),
+      right.safeGetAsAny(key),
+      interpolationFn,
+      strictForward = strictLookahead
+    )
+
+    val rightNullRow =
+      InternalRow.fromSeq(Array.fill[Any](right.schema.size)(null))
+
+    val (concat, newSchema) = InternalRowUtils.concat2(
+      this.schema,
+      right.schema,
+      Option(leftAlias),
+      Option(rightAlias),
+      (key :+ timeColumnName).toSet
+    )
+
+    val newRdd = joinedRdd.collectOrdered {
+      case (_, (r1, Some(r2))) => concat(r1, r2)
+      case (_, (r1, None)) => concat(r1, rightNullRow)
+    }
+    TimeSeriesRDD.fromInternalOrderedRDD(newRdd, newSchema)
+  }
+
+  def interpolate(
+    start: Long,
+    end: Long,
+    frequency: Long,
+    pastTolerance: Long = 0L,
+    futureTolerance: Long = 0L,
+    key: Seq[String] = Seq.empty,
+    interpolation: String = "linear",
+    strictLookahead: Boolean = false
+  ): TimeSeriesRDD = {
+    val sc = orderedRdd.sc
+    val clock =
+      new UniformClock(sc, start, end, frequency, 0L, true).asOrderedRDD()
+
+    // function that returns the values in the columns used as the secondary key
+    val selectKeys = (t: (Long, InternalRow)) => {
+      val cols = safeGetAsAny(key)(t._2)
+      InternalRow.fromSeq(cols)
+    }
+    val timeStamps = clock.map(_._1)
+    // we need to get the distinct keys in order to create all combinations of time, keys for the left join
+    val distinctKeys = orderedRdd.map(selectKeys).distinct
+    val clockWithKeys = timeStamps.cartesian(distinctKeys)
+
+    // order is not preserved in cartesian product
+    val orderedClockWithKeys = OrderedRDD.fromRDD(
+      clockWithKeys,
+      KeyPartitioningType.UnSorted
+    )
+
+    val pastToleranceFn = (t: Long) => t - pastTolerance
+    val futueToleranceFn = (t: Long) => t + futureTolerance
+    val interpolationFn = interpolation match {
+      case "linear" => InternalRowUtils.linearInterpolationFunction(schema)
+      case "lookback" => InternalRowUtils.lookbackInterpolationFunction(schema)
+      case _ => InternalRowUtils.linearInterpolationFunction(schema)
+    }
+
+    // helper function to get key columns from the clock RDD
+    val keyTypes = key.map(col => schema(col).dataType)
+    val getClockKeys: InternalRow => Seq[Any] = r => r.toSeq(keyTypes)
+    val keySchemaIndexes = key.map(column => schema.fieldIndex(column))
+
+    val joinedRdd = orderedClockWithKeys.interpolatedLeftJoin(
+      orderedRdd,
+      pastToleranceFn,
+      futueToleranceFn,
+      getClockKeys,
+      safeGetAsAny(key),
+      interpolationFn,
+      strictForward = strictLookahead
+    )
+
+    val timeIdx = schema.indexWhere(_.name == TimeSeriesRDD.timeColumnName)
+    val startTime = this.orderedRdd.keys.min() - pastTolerance
+    val endTime = this.orderedRdd.keys.max() + futureTolerance
+
+    val filteredRdd = joinedRdd.filterOrdered({
+      case (t, _) => startTime <= t && t <= endTime
+    })
+
+    // we want to make sure that even if the right side of the join is null, we fill in the secondary key information
+    def rightNullRow = InternalRow.fromSeq(Array.fill[Any](schema.size)(null))
+    def fillInKeys(row: InternalRow): InternalRow = {
+      val nullRow = rightNullRow
+      val rowValues = getClockKeys(row)
+      keySchemaIndexes
+        .zip(rowValues)
+        .foreach({ case (idx, value) => nullRow.update(idx, value) })
+      nullRow
+    }
+
+    val newRdd = filteredRdd.collectOrdered {
+      case (t, (_, Some(r2))) =>
+        if (timeIdx == -1) r2 else { r2.setLong(timeIdx, t); r2 }
+      case (t, (r, None)) => {
+        val nullRowWithKeys = fillInKeys(r)
+        if (timeIdx == -1) nullRowWithKeys
+        else {
+          nullRowWithKeys.setLong(timeIdx, t); nullRowWithKeys
+        }
+      }
+    }
+    TimeSeriesRDD.fromInternalOrderedRDD(newRdd, schema)
+  }
+
+  def summarizeCycles(
+    summarizer: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD = {
 
     // TODO: investigate the performance of the following implementation of summarizeCycles for supporting
     //       OverlappableSummarizer.
@@ -1571,18 +1928,27 @@ class TimeSeriesRDDImpl private[timeseries] (
       s"Function summarizeCycles currently does not support OverlappableSummarizer $summarizer"
     )
 
-    val pruned = TimeSeriesRDD.pruneColumns(this, summarizer.requiredColumns, key)
+    val pruned =
+      TimeSeriesRDD.pruneColumns(this, summarizer.requiredColumns, key)
     val sum = summarizer(pruned.schema)
 
     val timeType = TimeType.get(sparkSession)
-    val newSchema = Schema.prependTimeAndKey(sum.outputSchema, key.map(pruned.schema(_)), timeType)
+    val newSchema = Schema.prependTimeAndKey(
+      sum.outputSchema,
+      key.map(pruned.schema(_)),
+      timeType
+    )
     val numColumns = newSchema.length
 
     TimeSeriesRDD.fromInternalOrderedRDD(
-      pruned.orderedRdd.summarizeByKey(pruned.safeGetAsAny(key), sum)
+      pruned.orderedRdd
+        .summarizeByKey(pruned.safeGetAsAny(key), sum)
         .mapValues { (k, v) =>
           InternalRowUtils.concatTimeWithValues(
-            timeType.nanosToInternal(k), numColumns, v._1, v._2.toSeq(pruned.schema)
+            timeType.nanosToInternal(k),
+            numColumns,
+            v._1,
+            v._2.toSeq(pruned.schema)
           )
         },
       newSchema
@@ -1596,24 +1962,40 @@ class TimeSeriesRDDImpl private[timeseries] (
     inclusion: String = "begin",
     rounding: String = "end"
   ): TimeSeriesRDD = {
-    require(Seq("begin", "end").contains(inclusion), "inclusion must be \"begin\" or \"end\"")
-    require(Seq("begin", "end").contains(rounding), "rounding must be \"begin\" or \"end\"")
+    require(
+      Seq("begin", "end").contains(inclusion),
+      "inclusion must be \"begin\" or \"end\""
+    )
+    require(
+      Seq("begin", "end").contains(rounding),
+      "rounding must be \"begin\" or \"end\""
+    )
 
-    val pruned = TimeSeriesRDD.pruneColumns(this, summarizer.requiredColumns, key)
+    val pruned =
+      TimeSeriesRDD.pruneColumns(this, summarizer.requiredColumns, key)
     val sum = summarizer(pruned.schema)
     val clockLocal = clock.orderedRdd.map(_._1).collect()
-    val intervalized = pruned.orderedRdd.intervalize(clockLocal, inclusion, rounding).mapValues {
-      case (_, v) => v._2
-    }
+    val intervalized =
+      pruned.orderedRdd.intervalize(clockLocal, inclusion, rounding).mapValues {
+        case (_, v) => v._2
+      }
 
     val timeType = TimeType.get(sparkSession)
-    val newSchema = Schema.prependTimeAndKey(sum.outputSchema, key.map(pruned.schema(_)), timeType)
+    val newSchema = Schema.prependTimeAndKey(
+      sum.outputSchema,
+      key.map(pruned.schema(_)),
+      timeType
+    )
     val numColumns = newSchema.length
     TimeSeriesRDD.fromInternalOrderedRDD(
-      intervalized.summarizeByKey(pruned.safeGetAsAny(key), sum)
+      intervalized
+        .summarizeByKey(pruned.safeGetAsAny(key), sum)
         .mapValues { (k, v) =>
           InternalRowUtils.concatTimeWithValues(
-            timeType.nanosToInternal(k), numColumns, v._1, v._2.toSeq(pruned.schema)
+            timeType.nanosToInternal(k),
+            numColumns,
+            v._1,
+            v._2.toSeq(pruned.schema)
           )
         },
       newSchema
@@ -1641,7 +2023,9 @@ class TimeSeriesRDDImpl private[timeseries] (
       case _ => sys.error(s"Unsupported window type: $window")
     }
 
-    val newRdd = summarizedRdd.mapValues { case (_, (row1, row2)) => concat(row1, row2) }
+    val newRdd = summarizedRdd.mapValues {
+      case (_, (row1, row2)) => concat(row1, row2)
+    }
     TimeSeriesRDD.fromInternalOrderedRDD(newRdd, newSchema)
   }
 
@@ -1699,38 +2083,61 @@ class TimeSeriesRDDImpl private[timeseries] (
     columns: Seq[String] = null,
     key: Seq[String] = Seq.empty
   ): TimeSeriesRDD = {
-    val batchSize = sparkSession.conf.get(
-      FlintConf.WINDOW_BATCH_MAXSIZE_CONF,
-      FlintConf.WINDOW_BATCH_MAXSIZE_DEFAULT
-    ).toInt
+    val batchSize = sparkSession.conf
+      .get(
+        FlintConf.WINDOW_BATCH_MAXSIZE_CONF,
+        FlintConf.WINDOW_BATCH_MAXSIZE_DEFAULT
+      )
+      .toInt
 
     val otherRdd: TimeSeriesRDD = null
     val otherColumns: Seq[String] = null
 
-    val prunedSchema = Option(columns).map(cols =>
-      StructType(cols.map(c => this.schema(this.schema.fieldIndex(c))))).getOrElse(this.schema)
+    val prunedSchema = Option(columns)
+      .map(cols =>
+        StructType(cols.map(c => this.schema(this.schema.fieldIndex(c)))))
+      .getOrElse(this.schema)
 
     val (otherORdd, otherSchema, otherPrunedSchema, otherSk) =
       if (otherRdd == null) {
         (this.orderedRdd, this.schema, prunedSchema, this.safeGetAsAny(key))
       } else {
-        val otherPrunedSchema = Option(otherColumns).map{ cols =>
-          require(cols.nonEmpty, "otherColumns cannot be empty")
-          StructType(cols.map(c => otherRdd.schema(otherRdd.schema.fieldIndex(c))))
-        }.getOrElse(otherRdd.schema)
+        val otherPrunedSchema = Option(otherColumns)
+          .map { cols =>
+            require(cols.nonEmpty, "otherColumns cannot be empty")
+            StructType(
+              cols.map(c => otherRdd.schema(otherRdd.schema.fieldIndex(c)))
+            )
+          }
+          .getOrElse(otherRdd.schema)
 
-        (otherRdd.orderedRdd, otherRdd.schema, otherPrunedSchema, otherRdd.safeGetAsAny(key))
+        (
+          otherRdd.orderedRdd,
+          otherRdd.schema,
+          otherPrunedSchema,
+          otherRdd.safeGetAsAny(key)
+        )
       }
 
     val sk = this.safeGetAsAny(key)
 
     val sum = new ArrowWindowBatchSummarizer(
-      this.schema, prunedSchema, otherSchema, otherPrunedSchema
+      this.schema,
+      prunedSchema,
+      otherSchema,
+      otherPrunedSchema
     )
 
     val summarizedRdd = window match {
       case w: TimeWindow =>
-        orderedRdd.summarizeWindowBatches(w.of, sum, sk, otherORdd, otherSk, batchSize)
+        orderedRdd.summarizeWindowBatches(
+          w.of,
+          sum,
+          sk,
+          otherORdd,
+          otherSk,
+          batchSize
+        )
     }
 
     val (concat, newSchema) = InternalRowUtils.concat2(
@@ -1738,7 +2145,7 @@ class TimeSeriesRDDImpl private[timeseries] (
       sum.schema
     )
 
-    val newRdd = summarizedRdd.mapValues{
+    val newRdd = summarizedRdd.mapValues {
       case (k, row) =>
         val values: Array[Any] = Array(k)
         concat(new GenericInternalRow(values), row)
@@ -1758,46 +2165,74 @@ class TimeSeriesRDDImpl private[timeseries] (
    * @return a [[TimeSeriesRDD]] with summarized column.
    */
   private[flint] def summarizeInternal(
-    summarizerFactory: SummarizerFactory, key: Seq[String] = Seq.empty, depth: Int
+    summarizerFactory: SummarizerFactory,
+    key: Seq[String] = Seq.empty,
+    depth: Int
   ): TimeSeriesRDD = {
-    val pruned = TimeSeriesRDD.pruneColumns(this, summarizerFactory.requiredColumns, key)
+    val pruned =
+      TimeSeriesRDD.pruneColumns(this, summarizerFactory.requiredColumns, key)
     val summarizer = summarizerFactory(pruned.schema)
     val keyGetter = pruned.safeGetAsAny(key)
     val summarized = summarizerFactory match {
       case factory: OverlappableSummarizerFactory =>
         pruned.orderedRdd.summarize(
-          summarizer.asInstanceOf[OverlappableSummarizer], factory.window.of, keyGetter, depth
+          summarizer.asInstanceOf[OverlappableSummarizer],
+          factory.window.of,
+          keyGetter,
+          depth
         )
       case _ => pruned.orderedRdd.summarize(summarizer, keyGetter, depth)
     }
     val rows = summarized.map {
-      case (keyValues, row) => InternalRowUtils.prepend(row, summarizer.outputSchema, 0L +: keyValues: _*)
+      case (keyValues, row) =>
+        InternalRowUtils.prepend(
+          row,
+          summarizer.outputSchema,
+          0L +: keyValues: _*
+        )
     }
 
     val timeType = TimeType.get(sparkSession)
 
-    val newSchema = Schema.prependTimeAndKey(summarizer.outputSchema, key.map(pruned.schema(_)), timeType)
+    val newSchema = Schema.prependTimeAndKey(
+      summarizer.outputSchema,
+      key.map(pruned.schema(_)),
+      timeType
+    )
     TimeSeriesRDD.fromSeq(pruned.orderedRdd.sc, rows.toSeq, newSchema, true, 1)
   }
 
-  def summarize(summarizerFactory: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD =
+  def summarize(
+    summarizerFactory: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD =
     summarizeInternal(summarizerFactory, key, 2)
 
-  def summarizeState(summarizerFactory: SummarizerFactory, key: Seq[String] = Seq.empty): Map[Seq[Any], (Any, Any)] = {
+  def summarizeState(
+    summarizerFactory: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): Map[Seq[Any], (Any, Any)] = {
     val depth = 2
-    val pruned = TimeSeriesRDD.pruneColumns(this, summarizerFactory.requiredColumns, key)
+    val pruned =
+      TimeSeriesRDD.pruneColumns(this, summarizerFactory.requiredColumns, key)
     val summarizer = summarizerFactory(pruned.schema)
     val keyGetter = pruned.safeGetAsAny(key)
     val summarized = summarizerFactory match {
       case factory: OverlappableSummarizerFactory =>
         pruned.orderedRdd.summarizeState(
-          summarizer.asInstanceOf[OverlappableSummarizer], factory.window.of, keyGetter, depth
+          summarizer.asInstanceOf[OverlappableSummarizer],
+          factory.window.of,
+          keyGetter,
+          depth
         )
     }
     summarized
   }
 
-  def addSummaryColumns(summarizer: SummarizerFactory, key: Seq[String] = Seq.empty): TimeSeriesRDD = {
+  def addSummaryColumns(
+    summarizer: SummarizerFactory,
+    key: Seq[String] = Seq.empty
+  ): TimeSeriesRDD = {
     val sum = summarizer(schema)
     val reductionsRdd = orderedRdd.summarizations(sum, safeGetAsAny(key))
     val (concat, newSchema) = InternalRowUtils.concat2(schema, sum.outputSchema)
@@ -1807,37 +2242,50 @@ class TimeSeriesRDDImpl private[timeseries] (
     TimeSeriesRDD.fromInternalOrderedRDD(rowRdd, newSchema)
   }
 
-  def lookBackwardClock(shiftAmount: String): TimeSeriesRDD = shift(Windows.pastAbsoluteTime(shiftAmount))
+  def lookBackwardClock(shiftAmount: String): TimeSeriesRDD =
+    shift(Windows.pastAbsoluteTime(shiftAmount))
 
-  def lookForwardClock(shiftAmount: String): TimeSeriesRDD = shift(Windows.futureAbsoluteTime(shiftAmount))
+  def lookForwardClock(shiftAmount: String): TimeSeriesRDD =
+    shift(Windows.futureAbsoluteTime(shiftAmount))
 
-  def cast(updates: (String, DataType)*): TimeSeriesRDD = withUnshuffledDataFrame {
-    val columnsToCastMap = updates.toMap
-    require(!columnsToCastMap.contains(timeColumnName), "You can't cast the time column!")
+  def cast(updates: (String, DataType)*): TimeSeriesRDD =
+    withUnshuffledDataFrame {
+      val columnsToCastMap = updates.toMap
+      require(
+        !columnsToCastMap.contains(timeColumnName),
+        "You can't cast the time column!"
+      )
 
-    val newColumns = dataStore.dataFrame.schema.fieldNames.map {
-      columnName =>
+      val newColumns = dataStore.dataFrame.schema.fieldNames.map { columnName =>
         if (columnsToCastMap.contains(columnName)) {
           dataStore.dataFrame.col(columnName).cast(columnsToCastMap(columnName))
         } else {
           dataStore.dataFrame.col(columnName)
         }
-    }
+      }
 
-    dataStore.dataFrame.select(newColumns: _*)
-  }
+      dataStore.dataFrame.select(newColumns: _*)
+    }
 
   @Experimental
   def setTime(fn: Row => Long, window: String): TimeSeriesRDD = {
     if (window == null) {
       val timeIndex = schema.fieldIndex(timeColumnName)
-      TimeSeriesRDD.fromInternalOrderedRDD(orderedRdd.mapOrdered {
-        case (_: Long, r: InternalRow) =>
-          val timeStamp = fn(toExternalRow(r))
-          (timeStamp, InternalRowUtils.update(r, schema, timeIndex -> timeStamp))
-      }, schema)
+      TimeSeriesRDD.fromInternalOrderedRDD(
+        orderedRdd.mapOrdered {
+          case (_: Long, r: InternalRow) =>
+            val timeStamp = fn(toExternalRow(r))
+            (
+              timeStamp,
+              InternalRowUtils.update(r, schema, timeIndex -> timeStamp)
+            )
+        },
+        schema
+      )
     } else {
-      throw new IllegalArgumentException(s"Non-default window isn't supported at this moment.")
+      throw new IllegalArgumentException(
+        s"Non-default window isn't supported at this moment."
+      )
     }
   }
 
@@ -1854,17 +2302,22 @@ class TimeSeriesRDDImpl private[timeseries] (
 
     val timeType = TimeType.get(sparkSession)
 
-    val shiftFn: Long => Long = t => timeType.roundDownPrecision(window.shift(t))
+    val shiftFn: Long => Long = t =>
+      timeType.roundDownPrecision(window.shift(t))
 
     val newRdd = orderedRdd.shift(shiftFn).mapValues {
-      case (t, iRow) => InternalRowUtils.update(iRow, schema, timeIndex -> timeType.nanosToInternal(t))
+      case (t, iRow) =>
+        InternalRowUtils
+          .update(iRow, schema, timeIndex -> timeType.nanosToInternal(t))
     }
 
     TimeSeriesRDD.fromInternalOrderedRDD(newRdd, schema)
   }
 
   // this method reuses partition information of the current TSRDD
-  @inline private def withUnshuffledDataFrame(dataFrame: => DataFrame): TimeSeriesRDD = {
+  @inline private def withUnshuffledDataFrame(
+    dataFrame: => DataFrame
+  ): TimeSeriesRDD = {
     val newDataStore = TimeSeriesStore(dataFrame, dataStore.partInfo)
     new TimeSeriesRDDImpl(newDataStore)
   }
@@ -1872,27 +2325,31 @@ class TimeSeriesRDDImpl private[timeseries] (
   def validate(): Unit = {
     val ranges = orderedRdd.rangeSplits.map { _.range }
 
-    orderedRdd.mapPartitionsWithIndex {
-      case (index, rows) =>
-        val range = ranges(index)
-        var lastTimestamp = Long.MinValue
-        for (row <- rows) {
-          val timestamp = row._1
-          assert(
-            range.contains(timestamp),
-            s"Timestamp $timestamp is not in range $range of partition $index"
-          )
-          assert(
-            timestamp >= lastTimestamp,
-            s"Timestamp $timestamp is smaller than the previous timestamp $lastTimestamp"
-          )
-          lastTimestamp = timestamp
-        }
-        Iterator.empty
-    }.count()
+    orderedRdd
+      .mapPartitionsWithIndex {
+        case (index, rows) =>
+          val range = ranges(index)
+          var lastTimestamp = Long.MinValue
+          for (row <- rows) {
+            val timestamp = row._1
+            assert(
+              range.contains(timestamp),
+              s"Timestamp $timestamp is not in range $range of partition $index"
+            )
+            assert(
+              timestamp >= lastTimestamp,
+              s"Timestamp $timestamp is smaller than the previous timestamp $lastTimestamp"
+            )
+            lastTimestamp = timestamp
+          }
+          Iterator.empty
+      }
+      .count()
   }
 
-  override def withPartitionsPreserved(xform: DataFrame => DataFrame): TimeSeriesRDD = {
+  override def withPartitionsPreserved(
+    xform: DataFrame => DataFrame
+  ): TimeSeriesRDD = {
     val newDataFrame = xform(dataStore.dataFrame)
     new TimeSeriesRDDImpl(TimeSeriesStore(newDataFrame, dataStore.partInfo))
   }
@@ -1929,16 +2386,20 @@ class TimeSeriesRDDImpl private[timeseries] (
 
     val baseRowSchema = schema(baseRowsColumnName).dataType match {
       case ArrayType(s: StructType, _) => s
-      case _ => throw new IllegalArgumentException(
-        s"Cannot parse schema for base rows. Schema: ${schema(baseRowsColumnName)}"
-      )
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Cannot parse schema for base rows. Schema: ${schema(baseRowsColumnName)}"
+        )
     }
 
     val timeType = TimeType.get(sparkSession)
     val timeColumnIndex = schema.fieldIndex(timeColumnName)
 
-    val schemas = schemaColumNames.map(schema(_).dataType.asInstanceOf[StructType])
-    val newSchema = StructType(baseRowSchema.fields ++ schemas.flatMap(_.fields))
+    val schemas =
+      schemaColumNames.map(schema(_).dataType.asInstanceOf[StructType])
+    val newSchema = StructType(
+      baseRowSchema.fields ++ schemas.flatMap(_.fields)
+    )
 
     val baseRowsColumnIndex = schema.fieldIndex(baseRowsColumnName)
     val arrowColumnIndices = dataColumnNames.map(schema.fieldIndex)
