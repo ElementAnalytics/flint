@@ -1,0 +1,91 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/flint
+    docker:
+      - image: openjdk:8
+    environment:
+      - SCALA_VERSION: 2.11.8
+      - SBT_VERSION: 0.13.16
+    steps:
+      - checkout
+      - restore_cache:
+          key: sbt-cache-{{ checksum "build.sbt" }}
+      - run:
+          name: Get SBT and friends
+          command: |
+              apt update && apt install -y curl
+              curl -L -o sbt-$SBT_VERSION.deb https://dl.bintray.com/sbt/debian/sbt-$SBT_VERSION.deb
+              dpkg -i sbt-$SBT_VERSION.deb
+              rm sbt-$SBT_VERSION.deb
+              apt-get update
+              apt-get clean && apt-get autoclean
+      - run:
+          name: compile
+          command: sbt clean test:compile package
+      - save_cache:
+          key: sbt-cache-{{ checksum "build.sbt" }}
+          paths:
+            - "~/.ivy2/cache"
+            - "~/.sbt"
+            - "~/.coursier"
+            - "~/.m2"
+      - persist_to_workspace:
+          # Must be an absolute path, or relative path from working_directory.
+          # This is a directory on the container which is taken to be the root
+          # directory of the workspace.
+          root: ~/flint
+          # Must be relative path from root
+          paths:
+            - target
+  test:
+    working_directory: ~/flint
+    docker:
+      - image: circleci/openjdk:8-jdk
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ~/data-io/target
+      - restore_cache:
+          key: sbt-coverage-cache-{{ checksum "project/plugins.sbt" }}
+      - run: sbt -mem 2048 coverage test coverageReport coverageAggregate dumpLicenseReport
+      - run: cp -R target/test-metadata/ /tmp/reports
+      - store_artifacts:
+          path: /tmp/reports
+      - run: mkdir /tmp/license-report
+      - run: mv target/license-reports/data-io-licenses.html /tmp/license-report/index.html
+      - store_artifacts:
+          path: /tmp/license-report
+      - save_cache:
+          key: sbt-coverage-cache-{{ checksum "project/plugins.sbt" }}
+          paths:
+            - "~/.ivy2/cache"
+            - "~/.sbt"
+            - "~/.coursier"
+            - "~/.m2"
+  publish:
+    working_directory: ~/flint
+    docker:
+      - image: circleci/openjdk:8-jdk
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ~/flint/target
+      - run: deployment/artifactory
+
+workflows:
+  version: 2
+  build-and-deploy:
+    jobs:
+      - build
+      - test:
+          requires:
+            - build
+      - publish:
+          requires:
+            - test
+          context: org-global
+          filters:
+            branches:
+              only:
+                - master
