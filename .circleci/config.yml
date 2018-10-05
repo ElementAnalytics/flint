@@ -53,7 +53,7 @@ jobs:
       - store_artifacts:
           path: /tmp/reports
       - run: mkdir /tmp/license-report
-      - run: mv target/license-reports/flint.html /tmp/license-report/index.html
+      - run: mv target/license-reports/flint-licenses.html /tmp/license-report/index.html
       - store_artifacts:
           path: /tmp/license-report
       - save_cache:
