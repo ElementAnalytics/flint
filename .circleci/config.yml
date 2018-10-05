@@ -45,7 +45,7 @@ jobs:
     steps:
       - checkout
       - attach_workspace:
-          at: ~/data-io/target
+          at: ~/flint/target
       - restore_cache:
           key: sbt-coverage-cache-{{ checksum "project/plugins.sbt" }}
       - run: sbt -mem 2048 coverage test coverageReport coverageAggregate dumpLicenseReport
@@ -53,7 +53,7 @@ jobs:
       - store_artifacts:
           path: /tmp/reports
       - run: mkdir /tmp/license-report
-      - run: mv target/license-reports/data-io-licenses.html /tmp/license-report/index.html
+      - run: mv target/license-reports/flint.html /tmp/license-report/index.html
       - store_artifacts:
           path: /tmp/license-report
       - save_cache:
