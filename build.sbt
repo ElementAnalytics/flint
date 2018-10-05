@@ -19,6 +19,43 @@ import com.typesafe.sbt.SbtScalariform.ScalariformKeys
 import scalariform.formatter.preferences._
 import com.typesafe.sbt.SbtScalariform
 import BuildUtil._
+import scala.util.{Failure, Success, Try}
+
+
+val projectVersion = "0.6.1"
+lazy val circle_build_num = sys.env.getOrElse("CIRCLE_BUILD_NUM", "0")
+
+
+def getEnv(envVar: String, defaultOpt: Option[String] = None) = {
+  (Try(sys.env(envVar)), defaultOpt) match {
+    case (Success(envVal), _)           => envVal
+    case (Failure(e), Some(defaultOpt)) => defaultOpt
+    case (Failure(e), None)             =>
+      //throw new RuntimeException(s"Missing $envVar, failing build")
+      println(s"Missing $envVar environment variable, failing build")
+      sys.exit(-1)
+  }
+}
+val elementRepo = "snapshots" at "https://ean.jfrog.io/ean/sbt-dev-local"
+lazy val gitBranch: String = Process("git rev-parse --abbrev-ref HEAD").!!.stripLineEnd
+val artifactoryUser = getEnv("ARTIFACTORY_USER", Some("circleci"))
+val artifactoryKey = getEnv("ARTIFACTORY_KEY", Some("AP4raZNbcBrX2m2TWqWdDni1riwxrMuaSi4dpn"))
+credentials ++= Seq(
+  Credentials("snapshots", "ean.jfrog.io", artifactoryUser, artifactoryKey),
+  Credentials("Artifactory Realm", "ean.jfrog.io", artifactoryUser, artifactoryKey)
+)
+val publishSettings = Seq(
+  publishArtifact in (Compile, packageDoc) := false,
+  publishArtifact in Test := true,
+  publishArtifact in (Test, packageDoc) := false,
+  publishTo := {
+    gitBranch match {
+      case "master" => Some(elementRepo)
+      case _         => None
+    }
+  })
+
+
 
 lazy val formattingPreferences = {
   import scalariform.formatter.preferences._
@@ -29,7 +66,7 @@ lazy val formattingPreferences = {
 }
 
 lazy val compilationSettings = scalariformSettings ++ Seq(
-  version := "0.6.0-SNAPSHOT",
+  version := s"$projectVersion.$circle_build_num",
   organization := "com.twosigma",
   scalaVersion := "2.11.8",
   assemblyOption in assembly := (assemblyOption in assembly).value.copy(includeScala = false),
@@ -105,7 +142,7 @@ lazy val flint = project
         lazyDependencies.sparkCore, lazyDependencies.sparkML, lazyDependencies.sparkSQL
       )
     )
-  ))
+  )).settings(publishSettings)
 
 mergeStrategy in assembly <<= (mergeStrategy in assembly) { (old) =>
   {
