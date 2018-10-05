@@ -49,7 +49,7 @@ jobs:
       - restore_cache:
           key: sbt-coverage-cache-{{ checksum "project/plugins.sbt" }}
       - run: sbt -mem 2048 coverage test coverageReport coverageAggregate dumpLicenseReport
-      - run: cp -R target/test-metadata/ /tmp/reports
+      - run: cp -R target/test-reports/ /tmp/reports
       - store_artifacts:
           path: /tmp/reports
       - run: mkdir /tmp/license-report
