@@ -16,9 +16,12 @@
 
 import de.heikoseeberger.sbtheader.HeaderPattern
 import com.typesafe.sbt.SbtScalariform.ScalariformKeys
+
 import scalariform.formatter.preferences._
 import com.typesafe.sbt.SbtScalariform
 import BuildUtil._
+import sbt.Keys.resolvers
+
 import scala.util.{Failure, Success, Try}
 
 
@@ -38,12 +41,7 @@ def getEnv(envVar: String, defaultOpt: Option[String] = None) = {
 }
 val elementRepo = "snapshots" at "https://ean.jfrog.io/ean/sbt-dev-local"
 lazy val gitBranch: String = Process("git rev-parse --abbrev-ref HEAD").!!.stripLineEnd
-val artifactoryUser = getEnv("ARTIFACTORY_USER", Some("circleci"))
-val artifactoryKey = getEnv("ARTIFACTORY_KEY", Some("AP4raZNbcBrX2m2TWqWdDni1riwxrMuaSi4dpn"))
-credentials ++= Seq(
-  Credentials("snapshots", "ean.jfrog.io", artifactoryUser, artifactoryKey),
-  Credentials("Artifactory Realm", "ean.jfrog.io", artifactoryUser, artifactoryKey)
-)
+
 val publishSettings = Seq(
   publishArtifact in (Compile, packageDoc) := false,
   publishArtifact in Test := true,
@@ -53,7 +51,14 @@ val publishSettings = Seq(
       case "master" => Some(elementRepo)
       case _         => None
     }
-  })
+  },
+  resolvers := Seq(elementRepo),
+  credentials ++= Seq(
+    Credentials("snapshots", "ean.jfrog.io", "circleci", "AP4raZNbcBrX2m2TWqWdDni1riwxrMuaSi4dpn"),
+    Credentials("Artifactory Realm", "ean.jfrog.io", "circleci", "AP4raZNbcBrX2m2TWqWdDni1riwxrMuaSi4dpn")
+  )
+
+)
 
 
 
@@ -158,5 +163,4 @@ addCommandAlias(
   "; set test in Test := {}; assembly"
 )
 
-publishTo := sonatypePublishTo.value
 crossPaths := false
