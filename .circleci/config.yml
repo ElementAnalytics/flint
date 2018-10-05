@@ -71,7 +71,7 @@ jobs:
       - checkout
       - attach_workspace:
           at: ~/flint/target
-      - run: deployment/artifactory
+      - run: sbt publish
 
 workflows:
   version: 2
