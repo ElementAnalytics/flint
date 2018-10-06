@@ -50,7 +50,34 @@ object Clocks {
     timeZone: String = "UTC",
     endInclusive: Boolean = true
   ): TimeSeriesRDD = {
-    val clock = new UniformClock(sc, beginDateTime, endDateTime, frequency, offset, timeZone, endInclusive)
+    val clock = new UniformClock(
+      sc,
+      beginDateTime,
+      endDateTime,
+      frequency,
+      offset,
+      timeZone,
+      endInclusive
+    )
+    clock.asTimeSeriesRDD(sc.defaultParallelism)
+  }
+
+  def uniformClock(
+    sc: SparkContext,
+    begin: Long,
+    end: Long,
+    frequency: Long,
+    offset: Long = 0L,
+    endInclusive: Boolean = true
+  ): TimeSeriesRDD = {
+    val clock = new UniformClock(
+      sc,
+      begin,
+      end,
+      frequency,
+      offset,
+      endInclusive
+    )
     clock.asTimeSeriesRDD(sc.defaultParallelism)
   }
 
@@ -84,7 +111,16 @@ object Clocks {
     seed: Long = System.currentTimeMillis(),
     endInclusive: Boolean = true
   ): TimeSeriesRDD = {
-    val clock = new RandomClock(sc, beginDateTime, endDateTime, frequency, offset, timeZone, seed, endInclusive)
+    val clock = new RandomClock(
+      sc,
+      beginDateTime,
+      endDateTime,
+      frequency,
+      offset,
+      timeZone,
+      seed,
+      endInclusive
+    )
     clock.asTimeSeriesRDD(sc.defaultParallelism)
   }
 }
